@@ -1,6 +1,7 @@
 package fins
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -392,6 +393,147 @@ func TestTransport_GetTimeout(t *testing.T) {
 	}
 }
 
+func TestTransport_Heartbeat(t *testing.T) {
+	mockPLC := NewMockPLC()
+	addr, err := mockPLC.Start()
+	if err != nil {
+		t.Fatalf("failed to start mock PLC: %v", err)
+	}
+	defer mockPLC.Close()
+
+	transport, err := NewTransport(map[string]interface{}{
+		"plcIP":             "127.0.0.1",
+		"plcPort":           0,
+		"timeout":           2000,
+		"heartbeatInterval": 100,
+	})
+	if err != nil {
+		t.Fatalf("failed to create transport: %v", err)
+	}
+	_, port, _ := netSplitHostPort(addr)
+	transport.plcPort = port
+
+	ctx := context.Background()
+	if err := transport.Connect(ctx); err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	defer transport.Disconnect()
+
+	time.Sleep(300 * time.Millisecond)
+
+	if !transport.IsConnected() {
+		t.Error("expected connected after heartbeat")
+	}
+}
+
+func TestTransport_Reconnect_Failure(t *testing.T) {
+	transport, err := NewTransport(map[string]interface{}{
+		"plcIP":         "127.0.0.1",
+		"plcPort":       9999,
+		"timeout":       100,
+		"maxRetries":    2,
+		"retryInterval": 50,
+	})
+	if err != nil {
+		t.Fatalf("failed to create transport: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	err = transport.Reconnect(ctx)
+	if err == nil {
+		t.Fatal("expected error on reconnect failure")
+	}
+}
+
+func TestTransport_Reconnect_ContextTimeout(t *testing.T) {
+	transport, err := NewTransport(map[string]interface{}{
+		"plcIP":         "127.0.0.1",
+		"plcPort":       9999,
+		"timeout":       100,
+		"maxRetries":    10,
+		"retryInterval": 200,
+	})
+	if err != nil {
+		t.Fatalf("failed to create transport: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	err = transport.Reconnect(ctx)
+	if err == nil {
+		t.Fatal("expected error on reconnect failure")
+	}
+}
+
+func TestTransport_LoadConfig_WithDefaults(t *testing.T) {
+	cfg := map[string]interface{}{
+		"plcIP":   "192.168.1.100",
+		"plcPort": 9600,
+	}
+
+	transport, err := NewTransport(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if transport.srcAddr.Network != 0 || transport.srcAddr.Node != 1 || transport.srcAddr.Unit != 255 {
+		t.Errorf("unexpected default src address: %+v", transport.srcAddr)
+	}
+	if transport.dstAddr.Network != 0 || transport.dstAddr.Node != 1 || transport.dstAddr.Unit != 0 {
+		t.Errorf("unexpected default dst address: %+v", transport.dstAddr)
+	}
+}
+
+func TestTransport_LoadConfig_AllOptions(t *testing.T) {
+	cfg := map[string]interface{}{
+		"plcIP":             "10.0.0.1",
+		"plcPort":           9601,
+		"timeout":           5000,
+		"heartbeatInterval": 10000,
+		"maxRetries":        5,
+		"retryInterval":     2000,
+		"srcNetworkAddr":    1,
+		"srcNodeAddr":       10,
+		"srcUnitAddr":       128,
+		"dstNetworkAddr":    2,
+		"dstNodeAddr":       20,
+		"dstUnitAddr":       1,
+	}
+
+	transport, err := NewTransport(cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if transport.plcIP != "10.0.0.1" {
+		t.Errorf("expected plcIP 10.0.0.1, got %s", transport.plcIP)
+	}
+	if transport.plcPort != 9601 {
+		t.Errorf("expected plcPort 9601, got %d", transport.plcPort)
+	}
+	if transport.timeout != 5000*time.Millisecond {
+		t.Errorf("expected timeout 5000ms, got %v", transport.timeout)
+	}
+	if transport.heartbeatInterval != 10000*time.Millisecond {
+		t.Errorf("expected heartbeatInterval 10000ms, got %v", transport.heartbeatInterval)
+	}
+	if transport.maxRetries != 5 {
+		t.Errorf("expected maxRetries 5, got %d", transport.maxRetries)
+	}
+	if transport.retryInterval != 2000*time.Millisecond {
+		t.Errorf("expected retryInterval 2000ms, got %v", transport.retryInterval)
+	}
+	if transport.srcAddr.Network != 1 || transport.srcAddr.Node != 10 || transport.srcAddr.Unit != 128 {
+		t.Errorf("unexpected src address: %+v", transport.srcAddr)
+	}
+	if transport.dstAddr.Network != 2 || transport.dstAddr.Node != 20 || transport.dstAddr.Unit != 1 {
+		t.Errorf("unexpected dst address: %+v", transport.dstAddr)
+	}
+}
+
 func netSplitHostPort(addr string) (string, int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -402,4 +544,23 @@ func netSplitHostPort(addr string) (string, int, error) {
 		port = port*10 + int(c-'0')
 	}
 	return host, port, nil
+}
+
+func TestReadFull(t *testing.T) {
+	reader := bytes.NewReader([]byte{0x01, 0x02, 0x03})
+	buf := make([]byte, 3)
+	err := readFull(reader, buf)
+	if err != nil {
+		t.Errorf("readFull failed: %v", err)
+	}
+	if !bytes.Equal(buf, []byte{0x01, 0x02, 0x03}) {
+		t.Errorf("readFull returned wrong data: %v", buf)
+	}
+
+	shortReader := bytes.NewReader([]byte{0x01})
+	shortBuf := make([]byte, 2)
+	err = readFull(shortReader, shortBuf)
+	if err == nil {
+		t.Error("expected error for short read")
+	}
 }

@@ -2,6 +2,7 @@ package fins
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -23,6 +24,30 @@ func TestScheduler_NewScheduler(t *testing.T) {
 
 	if scheduler.MaxFrameLength() <= 0 {
 		t.Errorf("expected positive max frame length, got %d", scheduler.MaxFrameLength())
+	}
+}
+
+func TestScheduler_NewScheduler_WithIntConfig(t *testing.T) {
+	mockPLC := NewMockPLC()
+	addr, err := mockPLC.Start()
+	if err != nil {
+		t.Fatalf("failed to start mock PLC: %v", err)
+	}
+	defer mockPLC.Close()
+
+	transport, decoder := setupTestTransport(addr)
+
+	cfg := map[string]interface{}{
+		"maxFrameLength": 256,
+		"minInterval":    50,
+	}
+	scheduler := NewScheduler(transport, decoder, cfg)
+	if scheduler == nil {
+		t.Fatal("expected scheduler, got nil")
+	}
+
+	if scheduler.MaxFrameLength() != 256 {
+		t.Errorf("expected max frame length 256, got %d", scheduler.MaxFrameLength())
 	}
 }
 
@@ -472,6 +497,65 @@ func TestScheduler_SetMinInterval(t *testing.T) {
 
 	scheduler.SetMinInterval(10 * time.Millisecond)
 	time.Sleep(5 * time.Millisecond)
+}
+
+func TestScheduler_WaitMinInterval(t *testing.T) {
+	mockPLC := NewMockPLC()
+	addr, err := mockPLC.Start()
+	if err != nil {
+		t.Fatalf("failed to start mock PLC: %v", err)
+	}
+	defer mockPLC.Close()
+
+	transport, decoder := setupTestTransport(addr)
+	scheduler := NewScheduler(transport, decoder, map[string]interface{}{
+		"maxFrameLength": 64,
+		"minInterval":    50,
+	})
+
+	ctx := context.Background()
+	if err := transport.Connect(ctx); err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	defer transport.Disconnect()
+
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		points := []Point{
+			{ID: fmt.Sprintf("D%d", i), Address: fmt.Sprintf("D%d", i), DataType: DataTypeUINT16},
+		}
+		scheduler.ReadPoints(ctx, points)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed < 100*time.Millisecond {
+		t.Logf("elapsed: %v", elapsed)
+	}
+}
+
+func TestScheduler_NewScheduler_WithConfig(t *testing.T) {
+	mockPLC := NewMockPLC()
+	addr, err := mockPLC.Start()
+	if err != nil {
+		t.Fatalf("failed to start mock PLC: %v", err)
+	}
+	defer mockPLC.Close()
+
+	transport, decoder := setupTestTransport(addr)
+
+	config := map[string]interface{}{
+		"maxFrameLength": 128,
+		"minInterval":    10,
+	}
+
+	scheduler := NewScheduler(transport, decoder, config)
+	if scheduler == nil {
+		t.Fatal("expected scheduler, got nil")
+	}
+
+	if scheduler.MaxFrameLength() != 128 {
+		t.Errorf("expected max frame length 128, got %d", scheduler.MaxFrameLength())
+	}
 }
 
 func TestScheduler_String(t *testing.T) {

@@ -3,6 +3,7 @@ package fins
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestFinsTCPDriver_NewDriver(t *testing.T) {
@@ -874,5 +875,65 @@ func TestFinsTCPDriver_WritePoint_InvalidAddress(t *testing.T) {
 	err = driver.WritePoint(ctx, point, uint16(100))
 	if err == nil {
 		t.Error("expected error for invalid address")
+	}
+}
+
+func TestFinsTCPDriver_ReadPoints_SchedulerNil(t *testing.T) {
+	driver := NewFinsTCPDriver()
+	driver.initialized = true
+	driver.scheduler = nil
+
+	ctx := context.Background()
+	points := []Point{{ID: "D100", Address: "D100", DataType: DataTypeUINT16}}
+	_, err := driver.ReadPoints(ctx, points)
+	if err == nil {
+		t.Error("expected error when scheduler is nil")
+	}
+}
+
+func TestFinsTCPDriver_WritePoint_SchedulerNil(t *testing.T) {
+	driver := NewFinsTCPDriver()
+	driver.initialized = true
+	driver.scheduler = nil
+
+	ctx := context.Background()
+	point := Point{ID: "D100", Address: "D100", DataType: DataTypeUINT16}
+	err := driver.WritePoint(ctx, point, uint16(100))
+	if err == nil {
+		t.Error("expected error when scheduler is nil")
+	}
+}
+
+func TestFinsTCPDriver_ReadPoints_ReconnectFailure(t *testing.T) {
+	driver := NewFinsTCPDriver()
+	driver.initialized = true
+
+	transport, err := NewTransport(map[string]interface{}{
+		"plcIP":         "127.0.0.1",
+		"plcPort":       9999,
+		"maxRetries":    1,
+		"retryInterval": 100,
+	})
+	if err != nil {
+		t.Fatalf("failed to create transport: %v", err)
+	}
+	driver.transport = transport
+	driver.scheduler = NewScheduler(transport, NewDecoder(), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	points := []Point{{ID: "D100", Address: "D100", DataType: DataTypeUINT16}}
+	results, err := driver.ReadPoints(ctx, points)
+	if err != nil {
+		t.Fatalf("ReadPoints failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	if results["D100"].Quality != QualityBad {
+		t.Errorf("expected bad quality after reconnect failure, got %s", results["D100"].Quality)
 	}
 }

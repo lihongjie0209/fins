@@ -424,33 +424,42 @@ func TestDecoder_EncodeDecode_INT64(t *testing.T) {
 	}
 }
 
-func TestDecoder_DataTypeSize(t *testing.T) {
+func TestDecoder_DataTypeSize_AllTypes(t *testing.T) {
 	d := NewDecoder()
 
 	tests := []struct {
 		dataType DataType
 		expected int
+		err      bool
 	}{
-		{DataTypeUINT8, 1},
-		{DataTypeINT8, 1},
-		{DataTypeUINT16, 2},
-		{DataTypeINT16, 2},
-		{DataTypeUINT32, 4},
-		{DataTypeINT32, 4},
-		{DataTypeFLOAT, 4},
-		{DataTypeUINT64, 8},
-		{DataTypeINT64, 8},
-		{DataTypeDOUBLE, 8},
-		{DataTypeSTRING, 0},
+		{DataTypeBIT, 0, true},
+		{DataTypeUINT8, 1, false},
+		{DataTypeINT8, 1, false},
+		{DataTypeUINT16, 2, false},
+		{DataTypeINT16, 2, false},
+		{DataTypeUINT32, 4, false},
+		{DataTypeINT32, 4, false},
+		{DataTypeFLOAT, 4, false},
+		{DataTypeUINT64, 8, false},
+		{DataTypeINT64, 8, false},
+		{DataTypeDOUBLE, 8, false},
+		{DataTypeSTRING, 0, false},
 	}
 
 	for _, tt := range tests {
 		size, err := d.DataTypeSize(tt.dataType)
-		if err != nil {
-			t.Fatalf("DataTypeSize(%s) error: %v", tt.dataType, err)
-		}
-		if size != tt.expected {
-			t.Errorf("DataTypeSize(%s) = %d, want %d", tt.dataType, size, tt.expected)
+		if tt.err {
+			if err == nil {
+				t.Errorf("DataTypeSize(%s) expected error", tt.dataType)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("DataTypeSize(%s) unexpected error: %v", tt.dataType, err)
+				continue
+			}
+			if size != tt.expected {
+				t.Errorf("DataTypeSize(%s) = %d, want %d", tt.dataType, size, tt.expected)
+			}
 		}
 	}
 }
@@ -725,12 +734,109 @@ func TestDecoder_DecodeValue_InvalidType(t *testing.T) {
 	}
 }
 
-func TestDecoder_EncodeValue_InvalidType(t *testing.T) {
-	d := NewDecoder()
-	parsed := &ParsedAddress{AreaCode: MemoryAreaDMWord}
+func TestDecoder_GetWordAreaCode_AllAreas(t *testing.T) {
+	tests := []struct {
+		name     string
+		bitCode  uint8
+		wordCode uint8
+		err      bool
+	}{
+		{"CIO", MemoryAreaCIOBit, MemoryAreaCIOWord, false},
+		{"DM", MemoryAreaDMBit, MemoryAreaDMWord, false},
+		{"WR", MemoryAreaWRBit, MemoryAreaWRWord, false},
+		{"HR", MemoryAreaHRBit, MemoryAreaHRWord, false},
+		{"AR", MemoryAreaARBit, MemoryAreaARWord, false},
+		{"EM0", MemoryAreaEM0Bit, MemoryAreaEM0Word, false},
+		{"EM15", MemoryAreaEM15Bit, MemoryAreaEM15Word, false},
+		{"PV", MemoryAreaPVBit, MemoryAreaPVWord, false},
+		{"Flag", MemoryAreaFlagBit, MemoryAreaFlagBit, false},
+		{"invalid", 0xFF, 0, true},
+	}
 
-	_, err := d.EncodeValue(123, "INVALID", parsed)
-	if err == nil {
-		t.Error("expected error for invalid data type")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetWordAreaCode(tt.bitCode)
+			if tt.err {
+				if err == nil {
+					t.Errorf("GetWordAreaCode(%02x) expected error", tt.bitCode)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("GetWordAreaCode(%02x) unexpected error: %v", tt.bitCode, err)
+					return
+				}
+				if got != tt.wordCode {
+					t.Errorf("GetWordAreaCode(%02x) = %02x, want %02x", tt.bitCode, got, tt.wordCode)
+				}
+			}
+		})
+	}
+}
+
+func TestDecoder_GetBitAreaCode_AllAreas(t *testing.T) {
+	tests := []struct {
+		wordCode uint8
+		bitCode  uint8
+	}{
+		{MemoryAreaCIOWord, MemoryAreaCIOBit},
+		{MemoryAreaDMWord, MemoryAreaDMBit},
+		{MemoryAreaWRWord, MemoryAreaWRBit},
+		{MemoryAreaHRWord, MemoryAreaHRBit},
+		{MemoryAreaARWord, MemoryAreaARBit},
+		{MemoryAreaEM0Word, MemoryAreaEM0Bit},
+		{MemoryAreaEM15Word, MemoryAreaEM15Bit},
+	}
+
+	for _, tt := range tests {
+		got, err := GetBitAreaCode(tt.wordCode)
+		if err != nil {
+			t.Errorf("GetBitAreaCode(%02x) unexpected error: %v", tt.wordCode, err)
+			continue
+		}
+		if got != tt.bitCode {
+			t.Errorf("GetBitAreaCode(%02x) = %02x, want %02x", tt.wordCode, got, tt.bitCode)
+		}
+	}
+}
+
+func TestDecoder_EncodeValue_AllTypes(t *testing.T) {
+	d := NewDecoder()
+
+	tests := []struct {
+		name     string
+		value    interface{}
+		dataType DataType
+		addr     *ParsedAddress
+		wantErr  bool
+	}{
+		{"uint8", uint8(42), DataTypeUINT8, nil, false},
+		{"int8", int8(-42), DataTypeINT8, nil, false},
+		{"uint16", uint16(12345), DataTypeUINT16, nil, false},
+		{"int16", int16(-12345), DataTypeINT16, nil, false},
+		{"uint32", uint32(123456789), DataTypeUINT32, nil, false},
+		{"int32", int32(-123456789), DataTypeINT32, nil, false},
+		{"uint64", uint64(1234567890123), DataTypeUINT64, nil, false},
+		{"int64", int64(-1234567890123), DataTypeINT64, nil, false},
+		{"float32", float32(3.14), DataTypeFLOAT, nil, false},
+		{"float64", 3.14159, DataTypeDOUBLE, nil, false},
+		{"string", "test", DataTypeSTRING, nil, false},
+		{"bit true", true, DataTypeBIT, &ParsedAddress{IsBit: true}, false},
+		{"bit false", false, DataTypeBIT, &ParsedAddress{IsBit: true}, false},
+		{"float64 to uint8", float64(42), DataTypeUINT8, nil, false},
+		{"float64 to int8", float64(-42), DataTypeINT8, nil, false},
+		{"float64 to uint16", float64(12345), DataTypeUINT16, nil, false},
+		{"float64 to float32", float64(3.14), DataTypeFLOAT, nil, false},
+		{"invalid type", "not a number", DataTypeUINT8, nil, true},
+		{"invalid bit type", 1, DataTypeBIT, &ParsedAddress{IsBit: true}, true},
+		{"little endian string", uint16(1234), DataTypeUINT16, &ParsedAddress{IsString: true, ByteOrder: ByteOrderLow}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := d.EncodeValue(tt.value, tt.dataType, tt.addr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("EncodeValue() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
