@@ -75,7 +75,7 @@ func TestStrictMemoryRejectsTypesBoundsAndResponses(t *testing.T) {
 		t.Fatal("accepted invalid bit response")
 	}
 	lastWord, _ := ParseStrictMemorySelector("DM65535")
-	if _, err := BuildStrictMemoryRead(lastWord, 2); err == nil {
+	if err := ValidateStrictMemoryRange(lastWord, 2); err == nil {
 		t.Fatal("accepted overflowing word range")
 	}
 	lastBit, _ := ParseStrictMemorySelector("DM65535.15")

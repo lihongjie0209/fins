@@ -77,6 +77,11 @@ func (selector StrictMemorySelector) String() string {
 	return result
 }
 
+// ValidateStrictMemoryRange validates a selector and requested point count.
+func ValidateStrictMemoryRange(selector StrictMemorySelector, points int) error {
+	return validateStrictMemoryRange(selector, points)
+}
+
 // BuildStrictMemoryRead builds a bounded Memory Area Read command.
 func BuildStrictMemoryRead(selector StrictMemorySelector, points int) (StrictCommand, error) {
 	if err := validateStrictMemoryRange(selector, points); err != nil {
